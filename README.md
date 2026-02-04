@@ -1,4 +1,4 @@
-# go-network-labs
+# golang-network-labs
 
 This repository contains a minimal Go-based system that demonstrates
 HTTP and TCP server interaction, JSON-based communication, concurrent
