@@ -6,6 +6,7 @@ import (
 	"net"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 type Req struct {
@@ -23,7 +24,33 @@ func (r Res) WriteLine(conn net.Conn) {
 	conn.Write(append(b, '\n'))
 }
 
-// A-1. 프로그램 시작
+// 아무 명령이나 실행 못 하게 allowlist로 제한
+func isAllowed(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+
+	// 첫 토큰(명령어 이름)만 보고 제한
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return false
+	}
+	name := strings.ToLower(parts[0])
+
+	allowed := map[string]bool{
+		"ipconfig": true, // windows
+		"tasklist": true, // windows
+		"whoami":   true, // windows/linux
+		"uname":    true, // linux
+		"ls":       true, // linux
+		"pwd":      true, // linux
+		"date":     true, // linux
+	}
+
+	return allowed[name]
+}
+
 func main() {
 	//net.Listen("tcp", ":9000") 호출
 	//OS에 “9000 포트 TCP 서버 열어줘” 요청
@@ -32,16 +59,19 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	//A-2. 연결을 계속 받는 루프
+	//연결을 계속 받는 루프
 	for {
 		//클라이언트가 TCP로 접속할 때마다 Accept()가 연결을 하나 반환
 		conn, _ := ln.Accept()
+		if err != nil {
+			continue
+		}
 		//연결마다 handle(conn)을 고루틴으로 실행 → 여러 요청이 동시에 와도 각각 병렬 처리 가능
 		go handle(conn)
 	}
 }
 
-// A-3. 연결 처리(handle)
+// 연결 처리(handle)
 func handle(conn net.Conn) {
 	//defer conn.Close()로 끝날 때 연결 닫도록 예약
 	defer conn.Close()
@@ -63,14 +93,21 @@ func handle(conn net.Conn) {
 		return
 	}
 
-	if runtime.GOOS != "windows" {
-		//Windows 명령을 실행할 수 없으니 에러 응답하고 종료
-		Res{Ok: false, Error: "run tcp server on Windows"}.WriteLine(conn)
+	req.Cmd = strings.TrimSpace(req.Cmd)
+	if !isAllowed(req.Cmd) {
+		Res{Ok: false, Error: "command not allowed"}.WriteLine(conn)
 		return
 	}
 
-	//Windows 명령 실행
-	out, err := exec.Command("cmd", "/C", req.Cmd).CombinedOutput()
+	var c *exec.Cmd
+	if runtime.GOOS == "windows" {
+		c = exec.Command("cmd", "/C", req.Cmd)
+	} else {
+		// linux/mac
+		c = exec.Command("sh", "-c", req.Cmd)
+	}
+
+	out, err := c.CombinedOutput()
 	if err != nil {
 		//실패면 {ok:false, output:"...", error:"..."}를 JSON 한 줄로 write
 		Res{Ok: false, Output: string(out), Error: err.Error()}.WriteLine(conn)
