@@ -1,0 +1,26 @@
+# env
+.env
+.env.*
+
+# database
+data/
+db/
+mariadb-data/
+
+# binaries
+api-server
+tcp-server
+*.exe
+
+# logs
+*.log
+logs/
+
+# ide
+.idea/
+.vscode/
+*.iml
+
+# os
+.DS_Store
+Thumbs.db
