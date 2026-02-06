@@ -1,31 +1,38 @@
 # golang-network-labs
 
 This repository contains a minimal Go-based system that demonstrates
-HTTP and TCP server interaction, JSON-based communication, concurrent
-request handling, and lightweight persistence using sqlite3.
+HTTP and TCP server interaction, container-based service networking,
+concurrent request handling, and lightweight persistence using MariaDB.
 
-The project focuses on keeping the code small and readable while
-showing how different layers communicate in a real execution flow.
+The project focuses on keeping the code readable while showing
+how HTTP, TCP, database, and Docker-based environments communicate
+in a real execution flow.
 
----
+</br>
 
 ## Overview
 
-The system consists of two servers:
+The system consists of three services running via Docker Compose:
 
 - **API Server**
-  - Receives HTTP requests
+  - Receives HTTP requests (GET / POST)
+  - Supports JSON, form-urlencoded, and multipart/form-data inputs
   - Forwards commands to a TCP server
   - Returns execution results as HTTP JSON responses
-  - Stores execution logs in sqlite3
+  - Stores execution logs in MariaDB
 
 - **TCP Server**
   - Listens for TCP connections
-  - Receives JSON requests
-  - Executes Windows OS commands
+  - Receives JSON requests over TCP
+  - Executes OS commands inside a Linux container
+  - Restricts executable commands via an allowlist
   - Responds with JSON results
 
----
+- **MariaDB**
+  - Stores execution logs
+  - Initialized automatically on container startup
+
+</br>
 
 ## Project Structure
 
@@ -33,9 +40,14 @@ The system consists of two servers:
 
 .
 ├─ api/
-│  └─ main.go        # HTTP API server
+│  ├─ main.go        # HTTP API server
+│  └─ Dockerfile
 ├─ tcp/
-│  └─ main.go        # TCP command execution server
+│  ├─ main.go        # TCP command execution server
+│  └─ Dockerfile
+├─ docker-compose.yml
+├─ .env.example
+├─ .gitignore
 └─ README.md
 
 ```
@@ -48,87 +60,135 @@ The system consists of two servers:
 
 Client (curl / browser)
 ↓ HTTP
-API Server (localhost:8080)
-↓ TCP (JSON, one-line)
-TCP Server (localhost:9000)
+API Server (container, :8080)
+↓ TCP (JSON, service name resolution)
+TCP Server (container, :9000)
 ↓
-Windows OS Command
+Linux OS Command
+↓
+MariaDB (container, logs persistence)
 
 ````
-
----
-
-## How to Run
-
-### 1. Start the TCP Server
-
-The TCP server executes Windows commands and **must run on Windows**
-(not WSL or Docker).
-
-```bash
-cd tcp
-go run main.go
-````
-
-* Listens on TCP port `9000`
-* Waits for incoming JSON requests
 
 </br>
 
-### 2. Start the API Server
+## Environment Variables (.env)
 
-Open a separate terminal:
+Sensitive values are loaded from a `.env` file.
+This file **must not be committed to Git**.
+
+### 1. Create `.env`
+
+Create a `.env` file in the project root:
+
+```env
+MARIADB_ROOT_PASSWORD=rootpass
+MARIADB_DATABASE=appdb
+MARIADB_USER=appuser
+MARIADB_PASSWORD=apppass
+````
+
+### 2. `.env.example`
+
+The repository includes `.env.example` for reference:
+
+```env
+MARIADB_ROOT_PASSWORD=change_me
+MARIADB_DATABASE=appdb
+MARIADB_USER=appuser
+MARIADB_PASSWORD=change_me
+```
+
+### 3. Git Ignore
+
+`.env` must be excluded via `.gitignore`:
+
+```gitignore
+.env
+.env.*
+```
+
+</br>
+
+## How to Run (Docker Compose)
+
+From the project root:
+
+### 1. Build and start services
 
 ```bash
-cd api
-go run main.go
+docker compose up -d --build
 ```
 
-Expected output:
+### 2. Check running containers
 
-```
-api :8080
-```
-
-* The API server listens on HTTP port `8080`
-
----
-
-## How to Test
-
-Run test commands in a **different terminal** from the API server.
-
-### Execute a Windows Command
-
-```powershell
-curl.exe "http://localhost:8080/run?cmd=ipconfig"
-curl.exe "http://localhost:8080/run?cmd=tasklist"
+```bash
+docker compose ps
 ```
 
-Expected successful response:
+### 3. View logs
+
+```bash
+docker compose logs --tail=100 api
+docker compose logs --tail=100 tcp
+docker compose logs --tail=100 mariadb
+```
+
+### 4. Stop services
+
+```bash
+docker compose down
+```
+
+> If `.env` or `docker-compose.yml` changes, recreate containers:
+
+```bash
+docker compose up -d --build --force-recreate
+```
+
+</br>
+
+## API Usage
+
+### 1. GET /run
+
+```bash
+curl "http://localhost:8080/run?cmd=uname%20-a"
+```
+
+### 2. POST /run (JSON)
+
+```bash
+curl -X POST "http://localhost:8080/run" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd":"uname -a"}'
+```
+
+### 3. POST /run (multipart/form-data)
+
+```bash
+curl -X POST "http://localhost:8080/run" \
+  -F "cmd=uname -a"
+```
+
+Expected response:
 
 ```json
 {
   "ok": true,
-  "output": "Windows IP Configuration ..."
+  "output": "Linux ..."
 }
 ```
 
-Criteria for success:
-
-* `"ok"` is `true`
-* Command output is present
-* Response is valid JSON
-
 </br>
 
-### HTML Title Parsing
+## HTML Title Parsing
 
-```powershell
-curl.exe "http://localhost:8080/title?url=https://example.com"
+```bash
+curl "http://localhost:8080/title?url=https://example.com"
 ```
 
-Expected response:
+Response:
 
 ```json
 {
@@ -140,110 +200,61 @@ Expected response:
 This endpoint performs an HTTP GET and parses the `<title>` element
 from the HTML response. It does not interact with the TCP server.
 
----
-
-## sqlite3 Setup and Behavior
-
-### Dependency
-
-The API server uses sqlite3 via the Go driver:
-
-```bash
-go get github.com/mattn/go-sqlite3
-```
-
-No external database service is required.
-
 </br>
 
-### Database Initialization
+## Database (MariaDB)
 
-When the API server starts:
+### Logs Table
 
-* A file named `logs.db` is created in the `api/` directory
-* A table named `logs` is created automatically
-
-Table schema:
+The API server automatically creates the following table:
 
 ```sql
 CREATE TABLE logs (
-  ts TEXT,
-  cmd TEXT,
-  ok INTEGER
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  ts DATETIME NOT NULL,
+  cmd VARCHAR(255) NOT NULL,
+  ok TINYINT NOT NULL
 );
 ```
 
-No manual setup is needed.
-
-</br>
-
-### Verifying Database Creation
-
-From the `api/` directory:
+### Inspect Logs
 
 ```bash
-ls
-```
-
-Expected file:
-
-```
-logs.db
-```
-
-</br>
-
-### Inspecting Logs (Optional)
-
-If sqlite3 CLI is available:
-
-```bash
-sqlite3 logs.db
+docker exec -it golang-network-labs-mariadb-1 \
+  mariadb -uappuser -papppass appdb
 ```
 
 ```sql
-SELECT * FROM logs;
+SELECT * FROM logs ORDER BY id DESC LIMIT 10;
 ```
-
-Example output:
-
-```
-2026-02-04T00:12:52Z|ipconfig|1
-2026-02-04T00:19:49Z|tasklist|1
-```
-
-Column meanings:
-
-* `ts`  : execution timestamp (UTC)
-* `cmd` : executed command
-* `ok`  : 1 = success, 0 = failure
-
----
+</br>
 
 ## Expected System Behavior
 
 The system is considered working correctly when:
 
-* `/run?cmd=ipconfig` returns `"ok": true`
-* `/run?cmd=tasklist` returns a process list
-* Stopping the TCP server does not crash the API server
-* `logs.db` is created and updated per request
+* GET and POST `/run` return valid JSON responses
+* TCP commands execute successfully inside the container
+* Only allowlisted commands are executed
+* MariaDB logs are created and updated per request
 * `/title` works independently of the TCP server
+* Services communicate via Docker service names (not localhost)
 
----
+</br>
 
 ## Technologies Used
 
 * Go (`net/http`, `net`, `bufio`)
 * goroutines and channels
 * JSON (`encoding/json`)
-* sqlite3 (`database/sql`, `github.com/mattn/go-sqlite3`)
+* MariaDB (`database/sql`, `go-sql-driver/mysql`)
+* Docker & Docker Compose
 * HTML parsing (`golang.org/x/net/html`)
 
----
+</br>
 
 ## Notes
 
-* The TCP server executes OS commands and should be treated carefully
-* This structure is suitable for understanding layered server interaction,
-  not for direct production use
+* Command execution is intentionally restricted via allowlist
+* This project is intended for learning and demonstration purposes
+* Not suitable for direct production use
