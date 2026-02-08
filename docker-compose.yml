@@ -15,19 +15,31 @@ services:
     build: ./tcp
     ports:
       - "9000:9000"
+    volumes:
+      - ./data:/data:ro
 
   api:
     build: ./api
     ports:
       - "8080:8080"
+      - "8081:8081"
     environment:
       DB_HOST: mariadb
       DB_PORT: "3306"
       DB_NAME: ${MARIADB_DATABASE}
       DB_USER: ${MARIADB_USER}
       DB_PASS: ${MARIADB_PASSWORD}
+
       TCP_HOST: tcp
       TCP_PORT: "9000"
+
+      HTTP_TIMEOUT_SEC: "5"
+      TCP_DIAL_TIMEOUT_SEC: "2"
+      TCP_IO_TIMEOUT_SEC: "5"
+
+      RUN_MAX_CONCURRENCY: "5"
+      RATE_RPS: "5"
+      RATE_BURST: "10"
     depends_on:
       - tcp
       - mariadb
