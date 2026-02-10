@@ -55,7 +55,19 @@ func (h *Handler) Title(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// url_results 저장
-	resultID, _ := insertURLResult(h.db, reqID, userID, raw, title)
+	resultID, err := insertURLResult(h.db, reqID, userID, raw, title)
+	if err != nil {
+		http.Error(w, "db insert url_results failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if len(links) > 0 {
+		if err := insertURLLinks(h.db, resultID, links); err != nil {
+			http.Error(w, "db insert url_links failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	// url_links 저장
 	if resultID > 0 && len(links) > 0 {
 		_ = insertURLLinks(h.db, resultID, links)
@@ -194,7 +206,10 @@ func normalizeLink(base *url.URL, href string) string {
 		u = base.ResolveReference(u)
 	}
 	// 위험 스킴 제외
-	if u.Scheme == "javascript" || u.Scheme == "mailto" {
+	if href == "#" || strings.HasPrefix(href, "#") {
+		return ""
+	}
+	if u.Scheme == "javascript" || u.Scheme == "mailto" || u.Scheme == "tel" {
 		return ""
 	}
 	return u.String()
